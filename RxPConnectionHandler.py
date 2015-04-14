@@ -342,7 +342,8 @@ class RxPMessage:
 class RxPReceiveWindow:
 
     def __init__(self, windowSize, sequenceStart, connection):
-        self.messageBuffer = []
+        self.dataBuffer = bytearray()
+        self.bufferLock = threading.Event()
         self.window = [None]*windowSize
         self.windowSize = windowSize
         self.startSequenceNumber = sequenceStart
@@ -370,10 +371,25 @@ class RxPReceiveWindow:
         index = 0
         while self.window[index] and index < self.windowSize:
             index += 1
-        receivedMessages = self.window[:index]
+            self.dataBuffer += self.window[index].data
         self.window = self.window[index:] + [None]*index
-        self.messageBuffer += receivedMessages
         self.startSequenceNumber += index
+        self.bufferLock.set()
+
+    def popData(self, bufSize):
+        """ Attempts to remove bufSize bytes from the data buffer
+            If no data is available, the call will block until data is available
+            Upon data becoming available, the call will wait 200 ms for more data before
+            return bufSize bytes
+        """
+        self.bufferLock.wait()
+        time.sleep(0.2)
+        bufSize = max(bufSize, len(self.dataBuffer))
+        data = self.dataBuffer[:bufSize]
+        self.dataBuffer = self.dataBuffer[bufSize:]
+        if len(self.dataBuffer) == 0:
+            self.bufferLock.clear()
+        return data
 
 class RxPSendWindow:
     def __init__(self, windowSize, sequenceStart, connection, timeout=10):
