@@ -26,10 +26,10 @@ class RxPSocket:
         self.connectionHandler.connect(ip_address, port)
 
     def send(self, byte_array):
-        return
+        return self.connectionHandler.send(byte_array)
 
     def recv(self, buf_size):
-        return
+        return self.connectionHandler.recv(buf_size)
 
     def close(self):
         return
