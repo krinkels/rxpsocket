@@ -139,7 +139,7 @@ class RxPConnectionHandler:
 
             # connection established
             elif self.state == "ESTABLISHED":
-                if rxpMessage.finFlag:
+                if rxpMessage.isFIN():
                     self.state = "CLOSE_WAIT"
                 elif rxpMessage.isACK() or rxpMessage.isNACK():
                     self.sendWindow.receiveMessage(rxpMessage)
@@ -148,24 +148,24 @@ class RxPConnectionHandler:
 
             # closing handshake states
             elif self.state == "FIN-WAIT-1":
-                if rxpMessage.finFlag and not rxpMessage.ackFlag:
+                if rxpMessage.isFIN():
                     self.state = "CLOSING"
-                elif rxpMessage.ackFlag and not rxpMessage.finFlag:
+                elif rxpMessage.isACK():
                     self.state = "FIN-WAIT-2"
-                elif rxpMessage.finFlag and rxpMessage.ackFlag:
+                elif rxpMessage.isFINACK():
                     self.state = "TIMED-WAIT"
             elif self.state == "FIN-WAIT-2":
-                if rxpMessage.finFlag:
+                if rxpMessage.isFIN():
                     self.state = "TIMED-WAIT"
             elif self.state == "CLOSING":
-                if rxpMessage.ackFlag:
+                if rxpMessage.isACK():
                     self.state = "TIMED-WAIT"
             elif self.state == "TIMED-WAIT":
                 return
             elif self.state == "CLOSE-WAIT":
                 return
             elif self.state == "LAST-ACK":
-                if rxpMessage.ackFlag:
+                if rxpMessage.isACK():
                     self.state = "CLOSED"
         print "New state:", self.state
 
@@ -187,81 +187,58 @@ class RxPConnectionHandler:
         if not self.address:
             self.bindToTempAddress()
 
-        rxpMessage = RxPMessage()
-        rxpMessage.sourcePort = self.address[1]
-        rxpMessage.destPort = self.destinationAddress[1] 
+        rxpMessage = self.generateSkeletonMessage()
         rxpMessage.sequenceNumber = sequenceNumber
         rxpMessage.ackNumber = 0
         rxpMessage.synFlag = True
-        rxpMessage.ackFlag = False
-        rxpMessage.nackFlag = False 
-        rxpMessage.finFlag = False
         self.sendMessage(rxpMessage)
         return rxpMessage
 
     def sendSYNACK(self, sequenceNumber, ackNumber):
-        rxpMessage = RxPMessage()
-        rxpMessage.sourcePort = self.address[1]
-        rxpMessage.destPort = self.destinationAddress[1] 
+        rxpMessage = self.generateSkeletonMessage()
         rxpMessage.sequenceNumber = sequenceNumber
         rxpMessage.ackNumber = ackNumber
         rxpMessage.synFlag = True
         rxpMessage.ackFlag = True
-        rxpMessage.nackFlag = False 
-        rxpMessage.finFlag = False
         self.sendMessage(rxpMessage)
         return rxpMessage
 
     def sendACK(self, sequenceNumber, ackNumber):
-        rxpMessage = RxPMessage()
-        rxpMessage.sourcePort = self.address[1]
-        rxpMessage.destPort = self.destinationAddress[1] 
+        rxpMessage = self.generateSkeletonMessage()
         rxpMessage.sequenceNumber = sequenceNumber
         rxpMessage.ackNumber = ackNumber
-        rxpMessage.synFlag = False
         rxpMessage.ackFlag = True
-        rxpMessage.nackFlag = False 
-        rxpMessage.finFlag = False
         self.sendMessage(rxpMessage)
         return rxpMessage
 
     def sendNACK(self, sequenceNumber, nackNumber):
-        rxpMessage = RxPMessage()
-        rxpMessage.sourcePort = self.address[1]
-        rxpMessage.destPort = self.destinationAddress[1] 
+        rxpMessage = self.generateSkeletonMessage()
         rxpMessage.sequenceNumber = 0
         rxpMessage.ackNumber = nackNumber
-        rxpMessage.synFlag = False
-        rxpMessage.ackFlag = False
-        rxpMessage.nackFlag = True 
-        rxpMessage.finFlag = False
+        rxpMessage.nackFlag = True
         self.sendMessage(rxpMessage)
         return rxpMessage
 
     def sendFIN(self, sequenceNumber):
-        rxpMessage = RxPMessage()
-        rxpMessage.sourcePort = self.address[1]
-        rxpMessage.destPort = self.destinationAddress[1] 
+        rxpMessage = self.generateSkeletonMessage()
         rxpMessage.sequenceNumber = sequenceNumber
-        rxpMessage.ackNumber = 0
-        rxpMessage.synFlag = False
-        rxpMessage.ackFlag = False
-        rxpMessage.nackFlag = False
         rxpMessage.finFlag = True
         self.sendMessage(rxpMessage)
         return rxpMessage
 
     def sendFINACK(self, sequenceNumber, ackNumber):
-        rxpMessage = RxPMessage()
-        rxpMessage.sourcePort = self.address[1]
-        rxpMessage.destPort = self.destinationAddress[1] 
+        rxpMessage = self.generateSkeletonMessage()
         rxpMessage.sequenceNumber = sequenceNumber
         rxpMessage.ackNumber = ackNumber
-        rxpMessage.synFlag = False
-        rxpMessage.ackFlag = False
         rxpMessage.nackFlag = True 
         rxpMessage.finFlag = True
         self.sendMessage(rxpMessage)
+        return rxpMessage
+    
+    def generateSkeletonMessage(self):
+        rxpMessage = RxPMessage()
+        rxpMessage.sourcePort = self.address[1]
+        rxpMessage.destPort = self.destinationAddress[1]
         return rxpMessage
 
     def parseMessage(self, message):        
@@ -290,10 +267,10 @@ class RxPMessage:
         self.destPort = 0
         self.sequenceNumber = 0
         self.ackNumber = 0
-        self.synFlag = 0
-        self.ackFlag = 0
-        self.nackFlag = 0
-        self.finFlag = 0
+        self.synFlag = False
+        self.ackFlag = False
+        self.nackFlag = False
+        self.finFlag = False
         self.checksum = 0
         self.data = bytearray()
         self.acked = False
@@ -356,49 +333,111 @@ class RxPMessage:
     def isACK(self):
         return (not self.synFlag and self.ackFlag and not self.nackFlag and not self.finFlag)
 
+    def isFIN(self):
+        return (not self.synFlag and not self.ackFlag and not self.nackFlag and self.finFlag)
+
+    def isFINACK(self):
+        return (not self.synFlag and self.ackFlag and not self.nackFlag and self.finFlag)
+
 class RxPReceiveWindow:
 
     def __init__(self, windowSize, sequenceStart, connection):
-        self.messageBuffer = [None]*windowSize
+        self.messageBuffer = []
+        self.window = [None]*windowSize
         self.windowSize = windowSize
-        self.startSequenceNumber = 0
+        self.startSequenceNumber = sequenceStart
         self.connection = connection
 
-    def receiveMessage(self, message):
-        windowIndex = message.sequenceNumber - self.startSequenceNumber
+    def receiveMessage(self, recvdMessage):
+        """ Receives the message.
+            If message is uncorrupted, places it within receiving window, sends ACK, and
+            slides window if necessary.
+            If message is corrupted, sends NACK and discards message.
+        """
+        if recvdMessage.checkIntegrity():
+            windowIndex = recvdMessage.sequenceNumber - self.startSequenceNumber
+            if windowIndex < windowSize:
+                if windowIndex >= 0:
+                    self.window[windowIndex] = message
+                if windowIndex == 0:
+                    self.shiftWindow()
+                self.connection.sendACK(0, recvdMessage.sequenceNumber + 1)
+        else:
+            nackNumber = recvdMessage.sequenceNumber
+            self.connection.sendNACK(0, nackNumber)
+
+    def shiftWindow(self):
+        index = 0
+        while self.window[index] and index < self.windowSize:
+            index += 1
+        receivedMessages = self.window[:index]
+        self.window = self.window[index:] + [None]*index
+        self.messageBuffer += receivedMessages
+        self.startSequenceNumber += index
 
 class RxPSendWindow:
     def __init__(self, windowSize, sequenceStart, connection, timeout=10):
-        self.messageBuffer = [None]*windowSize
+        self.messageBuffer = []
         self.windowSize = windowSize
-        self.startSequenceNumber = 0
+        self.startSequenceNumber = sequenceStart
         self.timeout = timeout
         self.connection = connection
+        self.timers = {}
 
     def addMessage(self, message):
-        self.messageBuffer
+        """ Add a message to the message buffer and
+            send it if it falls within the window
+        """
+        self.messageBuffer.append(message)
+        windowIndex = message.sequenceNumber - self.startSequenceNumber
+        if windowIndex < windowSize:
+            self.connection.sendMessage(message)
 
-    def receiveMessage(self, message):
-        windowIndex = message.ackNumber - self.startSequenceNumber - 1
-        if windowIndex >= 0 and windowIndex < self.windowSize:
-            message = self.messageBuffer[windowIndex]
-            message.acked = True
-            if windowIndex == 0:
-                acked = self.popAllACKed()
-                ret
+    def sendMessage(self, message):
+        """ Sends the message and begins/resets a resend timeout timer
+        """
+        self.connection.sendMessage(message)
+        if message in self.timers:
+            timer = self.timers[message]
+            timer.cancel()
+        timer = threading.Timer(timeout, self.sendMessage, args=[message])
+        timer.setDaemon(True)
+        timer.start()
+        self.timers[message] = timer
 
-    def popAllACKed(self):
-        ACKed = []
-        lastUnACKed = 0
-        done = False
-        while not done and lastUnACKed < self.windowSize:
-            message = self.messageBuffer[lastUnACKed]
-            if message and message.acked:
-                lastUnACKed += 1
-            else:
-                done = True
-        ACKed = self.messageBuffer[:lastUnAcked]
-        self.messageBuffer = self.messageBuffer[lastUnAcked:]
-        if len(self.messageBuffer) < 5:
-            self.messageBuffer += [None]*(5 - len(self.messageBuffer))
+    def receiveMessage(self, recvdMessage):
+        """ Receives either an ACK or a NACK message
+            If ACK, marks the message as ACKED and slides window if necessary
+            If NACK, resends the message
+        """
+        if recvdMessage.checkIntegrity():
+            if recvdMessage.isACK():
+                windowIndex = recvdMessage.ackNumber - self.startSequenceNumber - 1
+                if windowIndex >= 0 and windowIndex < self.windowSize:
+                    message = self.messageBuffer[windowIndex]
+                    message.acked = True
+
+                    timer = self.timers[message]
+                    timer.cancel()
+                    self.timers.pop(message, None)
+
+                    if windowIndex == 0:
+                        self.slideWindow()
+
+            elif recvdMessage.isNACK():
+                windowIndex = recvdMessage.ackNumber - self.startSequenceNumber
+                if windowIndex >= 0 and windowIndex < self.windowSize and not message.acked:
+                    message = self.messageBuffer[windowIndex]
+                    self.sendMessage(message)
+
+    def slideWindow(self):
+        """ Slides the window up to the next un-ACKed message
+            Returns a list of messages that have been removed from the buffer
+        """
+        index = 0
+        while self.messageBuffer[index].acked and index < len(self.messageBuffer) and index < self.windowSize:
+            lastUnACKed += 1
+        ACKed = self.messageBuffer[:index]
+        self.messageBuffer = self.messageBuffer[index:]
+        self.sequenceStartNumber += len(ACKed)
         return ACKed
