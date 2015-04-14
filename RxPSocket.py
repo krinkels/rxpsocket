@@ -1,7 +1,7 @@
 import RxPConnectionHandler
 
 class RxPSocket:
-    
+
     def __init__(self):
         self.connectionHandler = None
         return

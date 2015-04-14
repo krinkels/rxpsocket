@@ -16,7 +16,7 @@ class RxPConnectionHandler:
     def bind(self, ip_address, port):
         self.address = (ip_address, port)
         self.socket.bind(self.address)
-   
+
     def listen(self, connections):
         if self.state == "CLOSED":
             self.state = "LISTEN"
@@ -38,7 +38,7 @@ class RxPConnectionHandler:
 
     def connect(self, ip_address, port):
         self.destinationAddress = (ip_address, port)
-       
+
         self.sequenceNumber = random.randint(0, 255)
 
         synMessage = self.sendSYN(self.sequenceNumber)
@@ -230,20 +230,20 @@ class RxPConnectionHandler:
         rxpMessage = self.generateSkeletonMessage()
         rxpMessage.sequenceNumber = sequenceNumber
         rxpMessage.ackNumber = ackNumber
-        rxpMessage.nackFlag = True 
+        rxpMessage.nackFlag = True
         rxpMessage.finFlag = True
         self.sendMessage(rxpMessage)
         return rxpMessage
-    
+
     def generateSkeletonMessage(self):
         rxpMessage = RxPMessage()
         rxpMessage.sourcePort = self.address[1]
         rxpMessage.destPort = self.destinationAddress[1]
         return rxpMessage
 
-    def parseMessage(self, message):        
+    def parseMessage(self, message):
         """ Takes in the message as a bytearray
-            Returns an RxPMessage object with the data 
+            Returns an RxPMessage object with the data
         """
         try:
             rxpMessage = RxPMessage()
@@ -300,7 +300,7 @@ class RxPMessage:
         message.append(self.destPort & 0b11111111)
         message.append(self.sequenceNumber)
         message.append(self.ackNumber)
-        
+
         flags = 0
         if self.synFlag:
             flags += 0b10000000
