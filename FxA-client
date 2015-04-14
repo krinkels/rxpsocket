@@ -5,6 +5,7 @@ import re
 import threading
 from time import sleep
 import RxPSocket
+import traceback
 
 argv = sys.argv
 if len(argv) < 4:
@@ -67,11 +68,12 @@ while client.is_active:
     action = raw_input(">> ")
     parts = action.split(" ")
     command, args = parts[0], parts[1:]
+    if not hasattr(client, command):
+        print "Invalid command"
     try:
         function = getattr(client, command)
         function(*args)
-    except AttributeError:
-        print "Invalid command"
     except Exception as e:
         print e
+        print traceback.format_exc()
 

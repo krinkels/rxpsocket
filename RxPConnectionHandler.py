@@ -356,7 +356,7 @@ class RxPReceiveWindow:
         """
         if recvdMessage.checkIntegrity():
             windowIndex = recvdMessage.sequenceNumber - self.startSequenceNumber
-            if windowIndex < windowSize:
+            if windowIndex < self.windowSize:
                 if windowIndex >= 0:
                     self.window[windowIndex] = message
                 if windowIndex == 0:
@@ -390,7 +390,7 @@ class RxPSendWindow:
         """
         self.messageBuffer.append(message)
         windowIndex = message.sequenceNumber - self.startSequenceNumber
-        if windowIndex < windowSize:
+        if windowIndex < self.windowSize:
             self.connection.sendMessage(message)
 
     def sendMessage(self, message):
