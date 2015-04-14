@@ -181,7 +181,7 @@ class RxPConnectionHandler:
         self.address = (socket.gethostname(), port)
 
     def sendMessage(self, message):
-        return self.socket.sendto(message.generateBytearray(), self.destinationAddress) - 8
+        return self.socket.sendto(message.generateBytearray(), (self.destinationAddress[0], 5000)) - 8
 
     def sendSYN(self, sequenceNumber):
         if not self.address:

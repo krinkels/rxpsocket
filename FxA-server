@@ -1,4 +1,5 @@
 #!/usr/bin/python
+# invocation: ./FxA-server 7001 127.0.0.1 5000
 import sys
 import re
 import threading
@@ -29,37 +30,67 @@ except ValueError:
     print "Invalid invocation. Netemu port number must be an integer"
     sys.exit()
 
+class Handler():
+    def __init__(self, conn, addr):
+        self.conn = conn
+        self.addr = addr
+        self.is_active = True
+        print "connected to {}".format(addr)
+
+    def handle(self):
+        while self.is_active:
+            data = ""
+            while 1:
+                recvd = self.conn.recv(1024)
+                data += recvd
+                if "\n" in recvd or len(recvd) is 0:
+                    break
+            data = data.strip()
+            return self.handle_data(data)
+
+    def handle_data(self, data):
+        print "recieved {}".format(data)
+
+    def close(self):
+        self.conn.close()
+
 class Server(threading.Thread):
     def __init__(self, host, port):
         threading.Thread.__init__(self)
         self.socket = RxPSocket.RxPSocket()
-        self.socket.bind('localhost', listening_port)
+        host = '127.0.1.1'
+        self.socket.bind(host, listening_port)
         self.socket.listen(5)
         self.signal = True
+        print "Server listening on {}:{}".format(host, listening_port)
 
     def run(self):
         while self.signal:
             conn, addr = self.socket.accept()
-            print "connected to {}".format(addr)
+            handler = Handler(conn, addr)
+            handler.handle()
+            handler.close()
         self.socket.close()
 
-    def setWindowSize(self, window_size):
+    def window(self, window_size):
         return
+
+    def terminate(self):
+        self.signal = False
+
 
 server = Server('localhost', listening_port)
 server.daemon = True
 server.start()
 
-while 1:
+while server.signal:
     action = raw_input(">> ")
     parts = action.split(" ")
-    if parts[0] == "window":
-        try:
-            window_size = int(parts[1])
-            server.setWindowSize(window_size)
-        except ValueError:
-            print "Invalid window size"
-
-    if action == "terminate" or action == "exit":
-        server.signal = False
-        break
+    command, args = parts[0], parts[1:]
+    try:
+        function = getattr(server, command)
+        function(*args)
+    except AttributeError:
+        print "Invalid command"
+    except Exception as e:
+        print e
