@@ -1,4 +1,5 @@
-from RxPSocket import *
+import RxPSocket
+import socket
 
-mysocket = RxPSocket()
+mysocket = RxPSocket.RxPSocket()
 mysocket.connect(socket.gethostname(), 6000)

@@ -1,6 +1,7 @@
-from RxPSocket import *
+import RxPSocket
+import socket
 
-server = RxPSocket()
+server = RxPSocket.RxPSocket()
 server.bind(socket.gethostname(), 6000)
 server.listen(5)
 server.accept()
