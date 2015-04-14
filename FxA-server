@@ -5,6 +5,7 @@ import re
 import threading
 from time import sleep
 import RxPSocket
+import socket
 
 argv = sys.argv
 if len(argv) < 4:
@@ -58,7 +59,6 @@ class Server(threading.Thread):
     def __init__(self, host, port):
         threading.Thread.__init__(self)
         self.socket = RxPSocket.RxPSocket()
-        host = '127.0.1.1'
         self.socket.bind(host, listening_port)
         self.socket.listen(5)
         self.signal = True
@@ -79,7 +79,7 @@ class Server(threading.Thread):
         self.signal = False
 
 
-server = Server('localhost', listening_port)
+server = Server(socket.gethostname(), listening_port)
 server.daemon = True
 server.start()
 
