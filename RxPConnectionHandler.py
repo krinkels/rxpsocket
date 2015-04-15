@@ -300,8 +300,10 @@ class RxPMessage:
         self.finFlag = False
         self.checksum = 0
         self.data = bytearray()
+
         self.acked = False
         self.sent = False
+        self.resendTimer = None
 
     def generateBytearray(self):
         """ Generates a bytearray from the message fields
@@ -446,7 +448,6 @@ class RxPSendWindow:
         self.startSequenceNumber = sequenceStart
         self.timeout = timeout
         self.connection = connection
-        self.timers = {}
 
     def addMessage(self, message):
         """ Add a message to the message buffer and
@@ -462,13 +463,11 @@ class RxPSendWindow:
         self.connection.sendMessage(message)
         message.sent = True
         print "Send SEQ", message.sequenceNumber
-        if message in self.timers:
-            timer = self.timers[message]
-            timer.cancel()
-        timer = threading.Timer(self.timeout, self.sendMessage, args=[message])
-        timer.setDaemon(True)
-        timer.start()
-        self.timers[message] = timer
+        if message.resendTimer:
+            message.resendTimer.cancel()
+        message.resendTimer = threading.Timer(self.timeout, self.sendMessage, args=[message])
+        message.resendTimer.setDaemon(True)
+        message.resendTimer.start()
     
     def receiveMessage(self, recvdMessage):
         """ Receives either an ACK or a NACK message
@@ -482,9 +481,7 @@ class RxPSendWindow:
                     message = self.messageBuffer[windowIndex]
                     message.acked = True
 
-                    timer = self.timers[message]
-                    timer.cancel()
-                    self.timers.pop(message, None)
+                    message.resendTimer.cancel()
 
                     if windowIndex == 0:
                         self.slideWindow()
