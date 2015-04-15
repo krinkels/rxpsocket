@@ -1,35 +1,13 @@
 #!/usr/bin/python
 # invocation: ./FxA-client 7000 127.0.0.1 5000
 import sys
-import re
 import threading
 from time import sleep
 import RxPSocket
 import traceback
+import FxA
 
-argv = sys.argv
-if len(argv) < 4:
-    print "Invalid invocation. Include listening port number, NetEmu IP, and NetEmu port number"
-    sys.exit()
-
-command, listening_port, netemu_ip, netemu_port = argv
-
-try:
-    listening_port = int(listening_port)
-except ValueError:
-    print "Invalid invocation. Listening port number must be an integer"
-    sys.exit()
-
-m = re.search('^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$', netemu_ip)
-if m is None:
-    print "Invalid invocation. Netemu IP must be IPv4 address"
-    sys.exit()
-
-try:
-    netemu_port = int(netemu_port)
-except ValueError:
-    print "Invalid invocation. Netemu port number must be an integer"
-    sys.exit()
+command, listening_port, netemu_ip, netemu_port = FxA.get_arguments()
 
 class Client():
     def __init__(self, host, port):
@@ -51,15 +29,14 @@ class Client():
         self.recv()
 
     def get(self, filename):
-        message = "get:{}".format(filename)
-        self.send(message)
+        self.send("get", filename)
         self.recv()
 
     def post(self, filename):
         print "posting {}".format(filename)
 
     def window(self, window_size):
-        self.send("window:{}".format(window_size))
+        self.send("window", window_size)
         self.recv()
     
     def disconnect(self):
@@ -68,8 +45,8 @@ class Client():
     def exit(self):
         self.is_active = False
 
-    def send(self, message):
-        self.socket.send(message + "\n")
+    def send(self, command, data=''):
+        self.socket.send(FxA.make_message(command, data))
 
     def recv(self):
         command, data = self.raw_recv()
@@ -93,19 +70,14 @@ class Client():
             file_handle.write(data)
 
     def raw_recv(self):
-        data = self.socket.recv(1024)
-        command, arg_length, data = data.split(":", 2)
-        command = str(command)
-        arg_length = int(arg_length)
-        while arg_length - len(data) > 0:
-            data += self.socket.recv(arg_length - len(data))
-        return (str(command), data)
+        command, data = FxA.read_message(self.socket)
+        return (command, data)
 
 
 client = Client('127.0.0.1', listening_port)
 
 while client.is_active:
-    action = raw_input(">> ")
+    action = raw_input("CLIENT>> ")
     parts = action.split(" ")
     command, args = parts[0], parts[1:]
     if len(command) == 0:

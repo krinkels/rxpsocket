@@ -1,37 +1,15 @@
 #!/usr/bin/python
 # invocation: ./FxA-server 7001 127.0.0.1 5000
 import sys
-import re
 import threading
 from time import sleep
 import RxPSocket
 import socket
 from os import listdir
 from os.path import isfile, join
+import FxA
 
-argv = sys.argv
-if len(argv) < 4:
-    print "Invalid invocation. Include listening port number, NetEmu IP, and NetEmu port number"
-    sys.exit()
-
-command, listening_port, netemu_ip, netemu_port = argv
-
-try:
-    listening_port = int(listening_port)
-except ValueError:
-    print "Invalid invocation. Listening port number must be an integer"
-    sys.exit()
-
-m = re.search('^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$', netemu_ip)
-if m is None:
-    print "Invalid invocation. Netemu IP must be IPv4 address"
-    sys.exit()
-
-try:
-    netemu_port = int(netemu_port)
-except ValueError:
-    print "Invalid invocation. Netemu port number must be an integer"
-    sys.exit()
+command, listening_port, netemu_ip, netemu_port = FxA.get_arguments()
 
 class Handler():
     def __init__(self, conn, addr, server):
@@ -43,37 +21,32 @@ class Handler():
 
     def handle(self):
         while self.is_active:
-            data = self.recv()
-            self.handle_data(data)
-
-    def handle_data(self, data):
-        parts = data.split(":", 1)
-        command = str(parts[0])
-        if hasattr(self, command):
-            arg = parts[1] if len(parts) > 1 else ''
-            args = []
-            if arg:
-                args.append(arg)
-            function = getattr(self, command)
-            function(*args)
-        else:
-            self.send("error", "Invalid command")
+            command, data = self.recv()
+            if hasattr(self, command):
+                args = []
+                if data:
+                    args.append(data)
+                function = getattr(self, command)
+                function(*args)
+            else:
+                self.send("error", "Invalid command")
 
     def hello(self):
-        self.send("message:hello")
+        self.send("message", "hello")
 
     def ls(self):
         filenames = [filename for filename in listdir('.') if isfile(join('.', filename))]
-        self.send("message", " ".join(filenames))
+        self.send("message", "\n".join(filenames))
 
     def get(self, filename):
         filename = join('.', str(filename))
         if not isfile(filename):
             return self.send("error", "no such file")
+        contents = ""
         with open(filename) as file_handle:
             contents = file_handle.read()
-            contents = "{}:{}".format(filename, contents)
-            self.send("file", contents)
+        contents = "{}:{}".format(filename, contents)
+        self.send("file", contents)
 
     def window(self, window_size):
         try:
@@ -89,20 +62,11 @@ class Handler():
         self.conn.close()
 
     def send(self, message_type, message):
-        length = len(message)
-        parts = [message_type, length, message]
-        message = ":".join([str(part) for part in parts])
-        self.conn.send(message)
+        self.conn.send(FxA.make_message(message_type, message))
 
     def recv(self):
-        data = ""
-        while 1:
-            recvd = self.conn.recv(1024)
-            data += recvd
-            if "\n" in recvd or len(recvd) is 0:
-                break
-        data = data.strip()
-        return data
+        command, data = FxA.read_message(self.conn)
+        return command, data
 
 class Server(threading.Thread):
     def __init__(self, host, port):
@@ -133,7 +97,7 @@ server.daemon = True
 server.start()
 
 while server.signal:
-    action = raw_input(">> ")
+    action = raw_input("SERVER>> ")
     parts = action.split(" ")
     command, args = parts[0], parts[1:]
     try:
