@@ -56,11 +56,15 @@ class RxPConnectionHandler:
         self.establishLock.wait()         
 
     def send(self, data):
-        message = self.generateSkeletonMessage()
-        message.sequenceNumber = self.sequenceNumber
-        message.data = data
-        self.sendWindow.addMessage(message)
-        self.sequenceNumber += 1
+        while len(data) > 0:
+            toSendLength = min(len(data), 1000)
+            toSend = data[:toSendLength]
+            message = self.generateSkeletonMessage()
+            message.sequenceNumber = self.sequenceNumber
+            message.data = toSend
+            self.sendWindow.addMessage(message)
+            self.sequenceNumber = (self.sequenceNumber + 1) % 256
+            data = data[toSendLength:]
         return len(data)
 
     def recv(self, bufSize):
@@ -82,7 +86,7 @@ class RxPConnectionHandler:
         self.resendTimer.start()
 
     def receiveMessage(self):
-        received, address = self.socket.recvfrom(65507)
+        received, address = self.socket.recvfrom(65535)
         message = bytearray(received)
         rxpMessage = self.parseMessage(message)
         return rxpMessage, address
@@ -297,6 +301,7 @@ class RxPMessage:
         self.checksum = 0
         self.data = bytearray()
         self.acked = False
+        self.sent = False
 
     def generateBytearray(self):
         """ Generates a bytearray from the message fields
@@ -393,7 +398,7 @@ class RxPReceiveWindow:
             slides window if necessary.
             If message is corrupted, sends NACK and discards message.
         """
-        ##print "Receive SEQ", recvdMessage.sequenceNumber
+        print "Receive SEQ", recvdMessage.sequenceNumber
         if recvdMessage.checkIntegrity():
             windowIndex = (recvdMessage.sequenceNumber - self.startSequenceNumber) % 256
             ##print "Placing into receive window:", recvdMessage
@@ -404,11 +409,11 @@ class RxPReceiveWindow:
                 if windowIndex == 0:
                     self.shiftWindow()
                 self.connection.sendACK(0, (recvdMessage.sequenceNumber + 1) % 256)
-                ##print "Send ACK", (recvdMessage.sequenceNumber + 1) % 256
+                print "Send ACK", (recvdMessage.sequenceNumber + 1) % 256
         else:
             nackNumber = recvdMessage.sequenceNumber
             self.connection.sendNACK(0, nackNumber)
-            ##print "Send NACK", recvdMessage.sequenceNumber
+            print "Send NACK", recvdMessage.sequenceNumber
 
     def shiftWindow(self):
         index = 0
@@ -448,16 +453,15 @@ class RxPSendWindow:
             send it if it falls within the window
         """
         self.messageBuffer.append(message)
-        windowIndex = (message.sequenceNumber - self.startSequenceNumber) % 256
         ##print "Adding message to send buffer"
-        if windowIndex < self.windowSize:
-            self.sendMessage(message)
+        self.sendWindow()
 
     def sendMessage(self, message):
         """ Sends the message and begins/resets a resend timeout timer
         """
         self.connection.sendMessage(message)
-        ##print "Send SEQ", message.sequenceNumber
+        message.sent = True
+        print "Send SEQ", message.sequenceNumber
         if message in self.timers:
             timer = self.timers[message]
             timer.cancel()
@@ -474,7 +478,6 @@ class RxPSendWindow:
         if recvdMessage.checkIntegrity():
             if recvdMessage.isACK():
                 windowIndex = (recvdMessage.ackNumber - self.startSequenceNumber - 1) % 256
-                ##print "ACKing", recvdMessage.ackNumber, "at index", windowIndex
                 if windowIndex >= 0 and windowIndex < self.windowSize:
                     message = self.messageBuffer[windowIndex]
                     message.acked = True
@@ -486,13 +489,21 @@ class RxPSendWindow:
                     if windowIndex == 0:
                         self.slideWindow()
 
-                    ##print "Receive ACK for", recvdMessage.ackNumber - 1
+                    print "Receive ACK", recvdMessage.ackNumber 
 
             elif recvdMessage.isNACK():
                 windowIndex = (recvdMessage.ackNumber - self.startSequenceNumber) % 256
                 if windowIndex >= 0 and windowIndex < self.windowSize and not self.messageBuffer[windowIndex].acked:
                     message = self.messageBuffer[windowIndex]
                     self.sendMessage(message)
+
+    def sendWindow(self):
+        index = 0
+        while index < len(self.messageBuffer) and index < self.windowSize:
+            message = self.messageBuffer[index]
+            if not message.sent:
+                self.sendMessage(message)
+            index += 1
 
     def slideWindow(self):
         """ Slides the window up to the next un-ACKed message
@@ -504,4 +515,7 @@ class RxPSendWindow:
         ACKed = self.messageBuffer[:index]
         self.messageBuffer = self.messageBuffer[index:]
         self.startSequenceNumber = (self.startSequenceNumber + len(ACKed)) % 256
+
+        self.sendWindow()
+
         return ACKed
