@@ -32,4 +32,4 @@ class RxPSocket:
         return self.connectionHandler.recv(buf_size)
 
     def close(self):
-        return
+        self.connectionHandler.close()

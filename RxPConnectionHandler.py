@@ -6,7 +6,7 @@ import time
 
 class RxPConnectionHandler:
 
-    def __init__(self):
+    def __init__(self, timeout=5):
         self.state = "CLOSED"
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.address = 0
@@ -14,6 +14,10 @@ class RxPConnectionHandler:
         self.recvWindow = None
         self.messageQueue = Queue.Queue()
         self.establishLock = threading.Event()
+        self.parentConnection = None
+        self.timeout = timeout
+        self.closeLock = threading.Event()
+        self.listeningFlag = threading.Event()
 
     def bind(self, ip_address, port):
         self.address = (ip_address, port)
@@ -21,12 +25,12 @@ class RxPConnectionHandler:
 
     def listen(self, connections):
         if self.state == "CLOSED":
-            self.state = "LISTEN"
+            self.setState("LISTEN")
         self.listeningQueue = Queue.Queue(5)
         self.activeConnections = {}
         receiveThread = threading.Thread(name='receive-messages',
                          target=self.listenMessages)
-        receiveThread.setDaemon(True)
+        self.receiveThread.setDomain(True)
         receiveThread.start()
 
     def accept(self):
@@ -43,15 +47,15 @@ class RxPConnectionHandler:
         self.sequenceNumber = random.randint(0, 255)
 
         synMessage = self.sendSYN(self.sequenceNumber)
-        self.resendTimer = threading.Timer(5, self.resendMessage, args=[synMessage])
+        self.resendTimer = threading.Timer(self.timeout, self.resendMessage, args=[synMessage])
         self.resendTimer.setDaemon(True)
         self.resendTimer.start()
-        self.state = "SYN-SENT"
+        self.setState("SYN-SENT")
 
-        receiveThread = threading.Thread(name='receive-messages',
+        self.receiveThread = threading.Thread(name='receive-messages',
                          target=self.listenMessages)
-        receiveThread.setDaemon(True)
-        receiveThread.start()
+        self.receiveThread.setDaemon(True)
+        self.receiveThread.start()
 
         self.establishLock.wait()         
 
@@ -73,15 +77,30 @@ class RxPConnectionHandler:
 
     def close(self):
         if self.state == "LISTEN":
-            self.state = "CLOSED"
+            self.setState("CLOSED")
+            self.closeLock.wait()
         elif self.state == "SYN-SENT":
-            self.state = "CLOSED"
+            self.sendFIN(self.sequenceNumber, 0)
+            self.setState("CLOSED")
+            self.closeLock.wait()
         elif self.state == "ESTABLISHED":
-            self.state = "FIN-WAIT-1"
+            FINmessage = self.generateSkeletonMessage()
+            FINmessage.finFlag = True
+            FINmessage.sequenceNumber = self.sequenceNumber
+            self.sequenceNumber = (self.sequenceNumber + 1) % 256
+            self.sendWindow.addMessage(FINmessage)
+            self.closeLock.wait()
+        elif self.state == "CLOSE-WAIT":
+            FINmessage = self.generateSkeletonMessage()
+            FINmessage.finFlag = True
+            FINmessage.sequenceNumber = self.sequenceNumber
+            self.sequenceNumber = (self.sequenceNumber + 1) % 256
+            self.sendWindow.addMessage(FINmessage)
+            self.closeLock.wait()
 
     def resendMessage(self, message):
         self.sendMessage(message)
-        self.resendTimer = threading.Timer(5, self.resendMessage, args=[message])
+        self.resendTimer = threading.Timer(self.timeout, self.resendMessage, args=[message])
         self.resendTimer.setDaemon(True)
         self.resendTimer.start()
 
@@ -92,28 +111,32 @@ class RxPConnectionHandler:
         return rxpMessage, address
 
     def listenMessages(self):
-        while True:
+        while not self.listeningFlag.isSet():
             rxpMessage, address = self.receiveMessage()
-            ##print "Received from", address, ":", rxpMessage
-            if self.activeConnections is None:
-                self.processMessage(rxpMessage)
-            else:
-                if rxpMessage.isSYN() and address not in self.activeConnections:
-                    """ New SYN request, queue the connection
-                    """
-                    ##print "Establishing new connection with", address
-                    newConnection = RxPConnectionHandler()
-                    newConnection.socket = self.socket
-                    newConnection.address = self.address
-                    newConnection.destinationAddress = address
-                    newConnection.state = "LISTEN"
-                    newConnection.messageQueue.put(rxpMessage)
-                    self.listeningQueue.put(newConnection)
-                elif address in self.activeConnections:
-                    connection = self.activeConnections[address]
-                    if rxpMessage.isSYN():
-                        connection.state = "LISTEN"
-                    connection.processMessage(rxpMessage)
+            if rxpMessage is not None:
+                if self.activeConnections is None:
+                    self.processMessage(rxpMessage)
+                else:
+                    if rxpMessage.isSYN() and address not in self.activeConnections:
+                        """ New SYN request, queue the connection
+                        """
+                        ##print "Establishing new connection with", address
+                        newConnection = RxPConnectionHandler()
+                        newConnection.socket = self.socket
+                        newConnection.address = self.address
+                        newConnection.destinationAddress = address
+                        newConnection.setState("LISTEN")
+                        newConnection.parentConnection = self
+                        newConnection.messageQueue.put(rxpMessage)
+                        newConnection.timeout = self.timeout
+                        self.listeningQueue.put(newConnection)
+                    elif address in self.activeConnections:
+                        connection = self.activeConnections[address]
+                        if rxpMessage.isSYN():
+                            connection.setState("LISTEN")
+                        receiveThread = threading.Thread(name='process-messages',
+                                         target=connection.processMessage, args=[rxpMessage])
+                        receiveThread.start()
 
     def processMessage(self, rxpMessage):
         ##print "current state:", self.state
@@ -127,7 +150,7 @@ class RxPConnectionHandler:
                     self.resendTimer = threading.Timer(5, self.resendMessage, args=[synackMessage])
                     self.resendTimer.setDaemon(True)
                     self.resendTimer.start()
-                    self.state = "SYN-RCVD"
+                    self.setState("SYN-RCVD")
 
             elif self.state == "SYN-RCVD":
                 if rxpMessage.isSYNACK() and rxpMessage.checkIntegrity():
@@ -135,12 +158,12 @@ class RxPConnectionHandler:
                     self.ackNumber = (rxpMessage.sequenceNumber + 1) % 256
                     self.sequenceNumber = (self.sequenceNumber + 1) % 256
                     self.sendACK(self.sequenceNumber, self.ackNumber)
-                    self.state = "ESTABLISHED"
+                    self.setState("ESTABLISHED")
                     self.establishLock.set()
                     self.recvWindow = RxPReceiveWindow(5, self.ackNumber, self)
                     self.sendWindow = RxPSendWindow(5, self.sequenceNumber, self)
                 elif rxpMessage.finFlag:
-                    self.state = "LISTEN"
+                    self.setState("LISTEN")
 
             elif self.state == "SYN-SENT":
                 if rxpMessage.isSYNACK() and rxpMessage.checkIntegrity():
@@ -151,11 +174,12 @@ class RxPConnectionHandler:
                     self.resendTimer = threading.Timer(5, self.resendMessage, args=[synackMessage])
                     self.resendTimer.setDaemon(True)
                     self.resendTimer.start()
-                    self.state = "ACK-SENT"
+                    self.setState("ACK-SENT")
 
             elif self.state == "ACK-SENT":
                 if rxpMessage.isACK() and rxpMessage.checkIntegrity():
                     self.resendTimer.cancel()
+                    self.closeTimer.cancel()
                     self.sequenceNumber = (self.sequenceNumber + 1) % 256
                     self.ackNumber = (rxpMessage.sequenceNumber) % 256
                     self.setState("ESTABLISHED")
@@ -164,6 +188,7 @@ class RxPConnectionHandler:
                     self.sendWindow = RxPSendWindow(5, self.sequenceNumber, self)
                 elif rxpMessage.checkIntegrity():
                     self.resendTimer.cancel()
+                    self.closeTimer.cancel()
                     self.sequenceNumber = (self.sequenceNumber + 1) % 256
                     self.ackNumber = (rxpMessage.sequenceNumber + 1) % 256
                     self.setState("ESTABLISHED")
@@ -173,39 +198,55 @@ class RxPConnectionHandler:
                     self.recvWindow.receiveMessage(rxpMessage) 
 
             # connection established
-            elif self.state == "ESTABLISHED":
-                if rxpMessage.isFIN():
-                    self.state = "CLOSE_WAIT"
-                elif rxpMessage.isACK() or rxpMessage.isNACK():
+            else:
+                if rxpMessage.isACK() or rxpMessage.isNACK():
                     self.sendWindow.receiveMessage(rxpMessage)
                 else:
                     self.recvWindow.receiveMessage(rxpMessage)
+                # remaining state transitions handled by windows
 
-            # closing handshake states
-            elif self.state == "FIN-WAIT-1":
-                if rxpMessage.isFIN():
-                    self.state = "CLOSING"
-                elif rxpMessage.isACK():
-                    self.state = "FIN-WAIT-2"
-                elif rxpMessage.isFINACK():
-                    self.state = "TIMED-WAIT"
-            elif self.state == "FIN-WAIT-2":
-                if rxpMessage.isFIN():
-                    self.state = "TIMED-WAIT"
-            elif self.state == "CLOSING":
-                if rxpMessage.isACK():
-                    self.state = "TIMED-WAIT"
-            elif self.state == "TIMED-WAIT":
-                return
-            elif self.state == "CLOSE-WAIT":
-                return
-            elif self.state == "LAST-ACK":
-                if rxpMessage.isACK():
-                    self.state = "CLOSED"
         ##print "New state:", self.state
 
     def setState(self, state):
-        self.state = state
+        print "Transition from {} to {}".format(self.state, state)
+        if state == "TIMED-WAIT" or state == "ACK-SENT":
+            self.state = state
+            self.closeTimer = threading.Timer(self.timeout, self.setState, args=["CLOSED"])
+            self.closeTimer.start()
+        elif state == "CLOSE-WAIT":
+            self.state = state
+            self.close()
+        elif state == "CLOSED":
+            if self.state == "TIMED-WAIT" or self.state == "LAST-ACK":
+                self.recvWindow.allReceived.wait(self.timeout)
+                self.sendWindow.allACKed.wait(self.timeout)
+                self.recvWindow = None
+                self.sendWindow = None
+            elif self.state == "ACK-SENT":
+                self.sendFIN(self.sequenceNumber)
+
+            if self.parentConnection is None and self.activeConnections is not None:
+                """ Original server connection
+                """
+                for address in self.activeConnections:
+                    activeConnections.close()
+                self.listeningFlag.set()
+                self.socket.close()
+            elif self.parentConnection is not None:
+                """ Connection spawned by original connection
+                """
+                parent = self.parentConnection
+                if self.destinationAddress in parent.activeConnections:
+                    parent.activeConnections.pop(self.destinationAddress, None)
+            else:
+                """ Client connection
+                """
+                self.listeningFlag.set()
+                self.socket.close() 
+            self.closeLock.set()
+            self.state = state
+        else:
+            self.state = state
 
     def bindToTempAddress(self):
         port = 7000
@@ -219,7 +260,6 @@ class RxPConnectionHandler:
         self.address = (socket.gethostname(), port)
 
     def sendMessage(self, message):
-        ##print "Sending to", self.destinationAddress, ":", message
         return self.socket.sendto(message.generateBytearray(), (self.destinationAddress[0], 5000)) - 8
 
     def sendSYN(self, sequenceNumber):
@@ -378,6 +418,22 @@ class RxPMessage:
                                                                                               self.checksum,
                                                                                               str(self.data))
 
+    def shorthand(self):
+        if self.isSYN():
+            return "SYN {}".format(self.sequenceNumber)
+        elif self.isSYNACK():
+            return "SYNACK {} {}".format(self.sequenceNumber, self.ackNumber)
+        elif self.isACK():
+            return "ACK {}".format(self.ackNumber)
+        elif self.isNACK():
+            return "NACK {}".format(self.ackNumber)
+        elif self.isFIN():
+            return "FIN {}".format(self.sequenceNumber)
+        elif self.isFINACK():
+            return "FINACK {} {}".format(self.sequenceNumber, self.ackNumber)
+        else:
+            return "SEQ {}".format(self.sequenceNumber)
+
     def isSYN(self):
         return (self.synFlag and not self.ackFlag and not self.nackFlag and not self.finFlag)
 
@@ -405,6 +461,7 @@ class RxPReceiveWindow:
         self.windowSize = windowSize
         self.startSequenceNumber = sequenceStart
         self.connection = connection
+        self.allReceived = threading.Event()
 
     def receiveMessage(self, recvdMessage):
         """ Receives the message.
@@ -413,7 +470,7 @@ class RxPReceiveWindow:
             If message is corrupted, sends NACK and discards message.
         """
         if recvdMessage.checkIntegrity():
-            print "Receive SEQ {} uncorrupted".format(recvdMessage.sequenceNumber)
+            print "RECEIVE {} uncorrupted".format(recvdMessage.shorthand())
             windowIndex = (recvdMessage.sequenceNumber - self.startSequenceNumber) % 256
             ##print "Placing into receive window:", recvdMessage
             ##print windowIndex
@@ -421,15 +478,29 @@ class RxPReceiveWindow:
                 """Packet within window or duplicate"""
                 if windowIndex < self.windowSize:
                     self.window[windowIndex] = recvdMessage
+                    self.allReceived.clear()
                 if windowIndex == 0:
                     self.shiftWindow()
                 self.connection.sendACK(0, (recvdMessage.sequenceNumber + 1) % 256)
-                print "Send ACK", (recvdMessage.sequenceNumber + 1) % 256
+                print "SEND ACK", (recvdMessage.sequenceNumber + 1) % 256
+
+                """ Closing handshake state updates
+                """
+                if recvdMessage.isFIN():
+                    if self.connection.state == "ESTABLISHED":
+                        self.connection.setState("CLOSE-WAIT")
+                    elif self.connection.state == "FIN-WAIT-1":
+                        self.connection.setState("CLOSING")
+                    elif self.connection.state == "FIN-WAIT-2":
+                        self.connection.setState("TIMED-WAIT")
+                elif recvdMessage.isFINACK():
+                    if self.connection.state == "FIN-WAIT-1":
+                        self.connection.setState("TIMED-WAIT")
         else:
-            print "Receive SEQ {} corrupted".format(recvdMessage.sequenceNumber)
+            print "RECEIVE {} corrupted".format(recvdMessage.shorthand())
             nackNumber = recvdMessage.sequenceNumber
             self.connection.sendNACK(0, nackNumber)
-            print "Send NACK", recvdMessage.sequenceNumber
+            print "SEND NACK", recvdMessage.sequenceNumber
 
     def shiftWindow(self):
         index = 0
@@ -439,6 +510,15 @@ class RxPReceiveWindow:
         self.window = self.window[index:] + [None]*index
         self.startSequenceNumber = (self.startSequenceNumber + index) % 256
         self.bufferLock.set()
+
+        """ Sets the event if the buffer is clear
+        """
+        empty = True
+        for message in self.window:
+            if message is not None:
+                empty = False
+        if empty:
+            self.allReceived.set()
 
     def popData(self, bufSize):
         """ Attempts to remove bufSize bytes from the data buffer
@@ -464,12 +544,14 @@ class RxPSendWindow:
         self.startSequenceNumber = sequenceStart
         self.timeout = timeout
         self.connection = connection
+        self.allACKed = threading.Event()
 
     def addMessage(self, message):
         """ Add a message to the message buffer and
             send it if it falls within the window
         """
         self.messageBuffer.append(message)
+        self.allACKed.clear()
         ##print "Adding message to send buffer"
         self.sendWindow()
 
@@ -478,12 +560,20 @@ class RxPSendWindow:
         """
         self.connection.sendMessage(message)
         message.sent = True
-        print "Send SEQ", message.sequenceNumber
+        print "SEND", message.shorthand()
         if message.resendTimer:
             message.resendTimer.cancel()
         message.resendTimer = threading.Timer(self.timeout, self.sendMessage, args=[message])
         message.resendTimer.setDaemon(True)
         message.resendTimer.start()
+
+        """ Closing handshake state updates
+        """
+        if message.isFIN():
+            if self.connection.state == "ESTABLISHED":
+                self.connection.setState("FIN-WAIT-1")
+            elif self.connection.state == "CLOSE-WAIT":
+                self.connection.setState("LAST-ACK")
     
     def receiveMessage(self, recvdMessage):
         """ Receives either an ACK or a NACK message
@@ -491,6 +581,7 @@ class RxPSendWindow:
             If NACK, resends the message
         """
         if recvdMessage.checkIntegrity():
+            print "RECEIVE", recvdMessage.shorthand()
             if recvdMessage.isACK():
                 windowIndex = (recvdMessage.ackNumber - self.startSequenceNumber - 1) % 256
                 if windowIndex >= 0 and windowIndex < self.windowSize:
@@ -502,7 +593,15 @@ class RxPSendWindow:
                     if windowIndex == 0:
                         self.slideWindow()
 
-                    print "Receive ACK", recvdMessage.ackNumber 
+                    """ Closing handshake state updates
+                    """
+                    if message.isFIN():
+                        if self.connection.state == "FIN-WAIT-1":
+                            self.connection.setState("FIN-WAIT-2")
+                        elif self.connection.state == "CLOSING":
+                            self.connection.setState("TIMED-WAIT")
+                        elif self.connection.state == "LAST-ACK":
+                            self.connection.setState("CLOSED")
 
             elif recvdMessage.isNACK():
                 windowIndex = (recvdMessage.ackNumber - self.startSequenceNumber) % 256
@@ -530,5 +629,8 @@ class RxPSendWindow:
         self.startSequenceNumber = (self.startSequenceNumber + len(ACKed)) % 256
 
         self.sendWindow()
+
+        if len(self.messageBuffer) == 0:
+            self.allACKed.set()
 
         return ACKed

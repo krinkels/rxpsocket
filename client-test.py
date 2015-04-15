@@ -10,7 +10,7 @@ print data
 mysocket.send(bytearray('hey!'))
 data = mysocket.recv(2048)
 print data
-mysocket.send(bytearray(['a']*60000))
+mysocket.send(bytearray('hey!'))
 data = mysocket.recv(2048)
 print data
-time.sleep(20)
+mysocket.close()
