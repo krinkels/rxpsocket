@@ -6,6 +6,8 @@ import threading
 from time import sleep
 import RxPSocket
 import socket
+from os import listdir
+from os.path import isfile, join
 
 argv = sys.argv
 if len(argv) < 4:
@@ -32,28 +34,75 @@ except ValueError:
     sys.exit()
 
 class Handler():
-    def __init__(self, conn, addr):
+    def __init__(self, conn, addr, server):
         self.conn = conn
         self.addr = addr
+        self.server = server
         self.is_active = True
         print "connected to {}".format(addr)
 
     def handle(self):
         while self.is_active:
-            data = ""
-            while 1:
-                recvd = self.conn.recv(1024)
-                data += recvd
-                if "\n" in recvd or len(recvd) is 0:
-                    break
-            data = data.strip()
-            return self.handle_data(data)
+            data = self.recv()
+            self.handle_data(data)
 
     def handle_data(self, data):
-        print "recieved {}".format(data)
+        parts = data.split(":", 1)
+        command = str(parts[0])
+        if hasattr(self, command):
+            arg = parts[1] if len(parts) > 1 else ''
+            args = []
+            if arg:
+                args.append(arg)
+            function = getattr(self, command)
+            function(*args)
+        else:
+            self.send("error", "Invalid command")
+
+    def hello(self):
+        self.send("message:hello")
+
+    def ls(self):
+        filenames = [filename for filename in listdir('.') if isfile(join('.', filename))]
+        self.send("message", " ".join(filenames))
+
+    def get(self, filename):
+        filename = join('.', str(filename))
+        if not isfile(filename):
+            return self.send("error", "no such file")
+        with open(filename) as file_handle:
+            contents = file_handle.read()
+            contents = "{}:{}".format(filename, contents)
+            self.send("file", contents)
+
+    def window(self, window_size):
+        try:
+            window_size = int(window_size)
+            self.server.setWindowSize(window_size)
+        except ValueError:
+            self.send("error", "Invalid window size")
+
+    def terminate(self):
+        self.server.terminate()
 
     def close(self):
         self.conn.close()
+
+    def send(self, message_type, message):
+        length = len(message)
+        parts = [message_type, length, message]
+        message = ":".join([str(part) for part in parts])
+        self.conn.send(message)
+
+    def recv(self):
+        data = ""
+        while 1:
+            recvd = self.conn.recv(1024)
+            data += recvd
+            if "\n" in recvd or len(recvd) is 0:
+                break
+        data = data.strip()
+        return data
 
 class Server(threading.Thread):
     def __init__(self, host, port):
@@ -67,12 +116,12 @@ class Server(threading.Thread):
     def run(self):
         while self.signal:
             conn, addr = self.socket.accept()
-            handler = Handler(conn, addr)
+            handler = Handler(conn, addr, self)
             handler.handle()
             handler.close()
         self.socket.close()
 
-    def window(self, window_size):
+    def setWindowSize(self, window_size):
         return
 
     def terminate(self):

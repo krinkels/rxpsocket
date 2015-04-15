@@ -43,18 +43,24 @@ class Client():
         self.socket.connect(self.host, self.port)
 
     def hello(self):
-        self.socket.send("hello")
+        self.send("hello")
+        self.recv()
+
+    def ls(self):
+        self.send("ls")
+        self.recv()
 
     def get(self, filename):
-        print "getting {}".format(filename)
+        message = "get:{}".format(filename)
+        self.send(message)
+        self.recv()
 
     def post(self, filename):
         print "posting {}".format(filename)
 
     def window(self, window_size):
-        window_size = int(window_size)
-        print "not yet implemented"
-        return
+        self.send("window:{}".format(window_size))
+        self.recv()
     
     def disconnect(self):
         self.socket.close()
@@ -62,18 +68,55 @@ class Client():
     def exit(self):
         self.is_active = False
 
+    def send(self, message):
+        self.socket.send(message + "\n")
+
+    def recv(self):
+        command, data = self.raw_recv()
+        fully_qualified_command = "recv_{}".format(command)
+        if hasattr(self, fully_qualified_command):
+            function = getattr(self, fully_qualified_command)
+            function(data)
+        else:
+            print "Cannot handle data format: {}".format(command)
+
+    def recv_error(self, error):
+        return self.recv_message("!!!ERROR!!! " + error)
+
+    def recv_message(self, message):
+        print message
+
+    def recv_file(self, f):
+        filename, data = f.split(":", 1)
+        filename = str(filename)
+        with open(filename, 'w') as file_handle:
+            file_handle.write(data)
+
+    def raw_recv(self):
+        data = self.socket.recv(1024)
+        command, arg_length, data = data.split(":", 2)
+        command = str(command)
+        arg_length = int(arg_length)
+        while arg_length - len(data) > 0:
+            data += self.socket.recv(arg_length - len(data))
+        return (str(command), data)
+
+
 client = Client('127.0.0.1', listening_port)
 
 while client.is_active:
     action = raw_input(">> ")
     parts = action.split(" ")
     command, args = parts[0], parts[1:]
-    if not hasattr(client, command):
+    if len(command) == 0:
+        continue
+    elif not hasattr(client, command):
         print "Invalid command"
-    try:
-        function = getattr(client, command)
-        function(*args)
-    except Exception as e:
-        print e
-        print traceback.format_exc()
+    else:
+        try:
+            function = getattr(client, command)
+            function(*args)
+        except Exception as e:
+            print e
+            print traceback.format_exc()
 
