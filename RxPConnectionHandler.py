@@ -412,19 +412,21 @@ class RxPReceiveWindow:
             slides window if necessary.
             If message is corrupted, sends NACK and discards message.
         """
-        print "Receive SEQ", recvdMessage.sequenceNumber
         if recvdMessage.checkIntegrity():
+            print "Receive SEQ {} uncorrupted".format(recvdMessage.sequenceNumber)
             windowIndex = (recvdMessage.sequenceNumber - self.startSequenceNumber) % 256
             ##print "Placing into receive window:", recvdMessage
             ##print windowIndex
-            if windowIndex < self.windowSize:
-                if windowIndex >= 0:
+            if windowIndex < self.windowSize or windowIndex > 128:
+                """Packet within window or duplicate"""
+                if windowIndex < self.windowSize:
                     self.window[windowIndex] = recvdMessage
                 if windowIndex == 0:
                     self.shiftWindow()
                 self.connection.sendACK(0, (recvdMessage.sequenceNumber + 1) % 256)
                 print "Send ACK", (recvdMessage.sequenceNumber + 1) % 256
         else:
+            print "Receive SEQ {} corrupted".format(recvdMessage.sequenceNumber)
             nackNumber = recvdMessage.sequenceNumber
             self.connection.sendNACK(0, nackNumber)
             print "Send NACK", recvdMessage.sequenceNumber
