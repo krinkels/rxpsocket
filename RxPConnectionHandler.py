@@ -419,7 +419,7 @@ class RxPReceiveWindow:
 
     def shiftWindow(self):
         index = 0
-        while self.window[index] and index < self.windowSize:
+        while index < self.windowSize and self.window[index]:
             self.dataBuffer += self.window[index].data
             index += 1
         self.window = self.window[index:] + [None]*index
