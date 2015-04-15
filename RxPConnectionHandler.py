@@ -28,10 +28,10 @@ class RxPConnectionHandler:
             self.setState("LISTEN")
         self.listeningQueue = Queue.Queue(5)
         self.activeConnections = {}
-        receiveThread = threading.Thread(name='receive-messages',
+        self.receiveThread = threading.Thread(name='receive-messages',
                          target=self.listenMessages)
-        self.receiveThread.setDomain(True)
-        receiveThread.start()
+        self.receiveThread.setDaemon(True)
+        self.receiveThread.start()
 
     def accept(self):
         newConnection = self.listeningQueue.get(True)
@@ -228,8 +228,9 @@ class RxPConnectionHandler:
             if self.parentConnection is None and self.activeConnections is not None:
                 """ Original server connection
                 """
-                for address in self.activeConnections:
-                    activeConnections.close()
+                connections = self.activeConnections.values()
+                for connection in connections:
+                    connection.close()
                 self.listeningFlag.set()
                 self.socket.close()
             elif self.parentConnection is not None:
