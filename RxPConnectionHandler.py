@@ -446,8 +446,10 @@ class RxPReceiveWindow:
             Upon data becoming available, the call will wait 200 ms for more data before
             return bufSize bytes
         """
+        toSleep = not self.bufferLock.isSet()
         self.bufferLock.wait()
-        time.sleep(0.2)
+        if toSleep:
+            time.sleep(0.2)
         bufSize = max(bufSize, len(self.dataBuffer))
         data = self.dataBuffer[:bufSize]
         self.dataBuffer = self.dataBuffer[bufSize:]
