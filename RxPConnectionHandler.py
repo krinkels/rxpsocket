@@ -158,10 +158,19 @@ class RxPConnectionHandler:
                     self.resendTimer.cancel()
                     self.sequenceNumber = (self.sequenceNumber + 1) % 256
                     self.ackNumber = (rxpMessage.sequenceNumber) % 256
-                    self.state = "ESTABLISHED"
+                    self.setState("ESTABLISHED")
                     self.establishLock.set()
                     self.recvWindow = RxPReceiveWindow(5, self.ackNumber, self)
                     self.sendWindow = RxPSendWindow(5, self.sequenceNumber, self)
+                elif rxpMessage.checkIntegrity():
+                    self.resendTimer.cancel()
+                    self.sequenceNumber = (self.sequenceNumber + 1) % 256
+                    self.ackNumber = (rxpMessage.sequenceNumber + 1) % 256
+                    self.setState("ESTABLISHED")
+                    self.establishLock.set()
+                    self.recvWindow = RxPReceiveWindow(5, self.ackNumber, self)
+                    self.sendWindow = RxPSendWindow(5, self.sequenceNumber, self)
+                    self.recvWindow.receiveMessage(rxpMessage) 
 
             # connection established
             elif self.state == "ESTABLISHED":
