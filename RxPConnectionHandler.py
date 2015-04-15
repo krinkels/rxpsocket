@@ -204,6 +204,9 @@ class RxPConnectionHandler:
                     self.state = "CLOSED"
         ##print "New state:", self.state
 
+    def setState(self, state):
+        self.state = state
+
     def bindToTempAddress(self):
         port = 7000
         done = False
