@@ -22,6 +22,9 @@ class Handler():
     def handle(self):
         while self.is_active:
             command, data = self.recv()
+            if command is None:
+                self.is_active = False
+                break
             if hasattr(self, command):
                 args = []
                 if data:
@@ -47,6 +50,13 @@ class Handler():
             contents = file_handle.read()
         contents = "{}:{}".format(filename, contents)
         self.send("file", contents)
+
+    def file(self, data):
+        filename, data = data.split(":", 1)
+        filename = str(filename)
+        with open(filename, 'w') as file_handle:
+            file_handle.write(data)
+        self.send("message", "file saved remotely")
 
     def window(self, window_size):
         try:

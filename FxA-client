@@ -5,6 +5,8 @@ import threading
 from time import sleep
 import RxPSocket
 import traceback
+from os import listdir
+from os.path import isfile, join
 import FxA
 
 command, listening_port, netemu_ip, netemu_port = FxA.get_arguments()
@@ -33,7 +35,16 @@ class Client():
         self.recv()
 
     def post(self, filename):
-        print "posting {}".format(filename)
+        filename = join('.', str(filename))
+        if not isfile(filename):
+            print "no such file"
+            return
+        contents = ""
+        with open(filename) as file_handle:
+            contents = file_handle.read()
+        contents = "{}:{}".format(filename, contents)
+        self.send("file", contents)
+        self.recv()
 
     def window(self, window_size):
         self.send("window", window_size)

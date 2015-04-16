@@ -36,10 +36,14 @@ def make_message(message_type, message):
 
 def read_message(socket):
     data = socket.recv(1024)
+    if data is None:
+        print "got None data"
+        return None, None
     command, arg_length, data = data.split(":", 2)
     command = str(command)
     arg_length = int(arg_length)
-    #print "got command {} and arg_length {} now reading data".format(command, arg_length)
+    print "got command {} and arg_length {} now reading data".format(command, arg_length)
     while arg_length - len(data) > 0:
         data += socket.recv(arg_length - len(data))
+        print "{} bytes left".format(arg_length-len(data))
     return command, data
