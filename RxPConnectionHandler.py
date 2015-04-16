@@ -6,7 +6,7 @@ import time
 
 class RxPConnectionHandler:
 
-    def __init__(self, timeout=6):
+    def __init__(self, timeout=6, windowSize = 1):
         self.state = "CLOSED"
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.address = 0
@@ -18,6 +18,7 @@ class RxPConnectionHandler:
         self.timeout = timeout
         self.closeLock = threading.Event()
         self.listeningFlag = threading.Event()
+        self.windowSize = windowSize
 
     def bind(self, ip_address, port):
         self.address = (ip_address, port)
@@ -54,6 +55,7 @@ class RxPConnectionHandler:
         synMessage = self.generateSkeletonMessage()
         synMessage.synFlag = True
         synMessage.sequenceNumber = self.sequenceNumber
+        synMessage.windowSize = self.windowSize
         self.sendWindow.addMessage(synMessage)
         self.setState("SYN-SENT")
 
@@ -67,7 +69,7 @@ class RxPConnectionHandler:
     def send(self, data):
         if self.state == "ESTABLISHED":
             while len(data) > 0:
-                toSendLength = min(len(data), 1000)
+                toSendLength = min(len(data), 5000)
                 toSend = data[:toSendLength]
                 message = self.generateSkeletonMessage()
                 message.sequenceNumber = self.sequenceNumber
@@ -157,6 +159,7 @@ class RxPConnectionHandler:
                 if rxpMessage.isSYN() and rxpMessage.checkIntegrity():
                     self.ackNumber = (rxpMessage.sequenceNumber + 1) % 256
                     self.sequenceNumber = random.randint(0, 100)
+                    self.windowSize = rxpMessage.windowSize
 
                     synackMessage = self.generateSkeletonMessage()
                     synackMessage.synFlag = True
@@ -177,8 +180,8 @@ class RxPConnectionHandler:
                     self.sendACK(self.sequenceNumber, self.ackNumber)
                     self.setState("ESTABLISHED")
                     self.establishLock.set()
-                    self.recvWindow = RxPReceiveWindow(5, self.ackNumber, self)
-                    self.sendWindow = RxPSendWindow(5, self.sequenceNumber, self, self.timeout)
+                    self.recvWindow = RxPReceiveWindow(self.windowSize * 4, self.ackNumber, self)
+                    self.sendWindow = RxPSendWindow(self.windowSize * 4, self.sequenceNumber, self, self.timeout)
                 elif rxpMessage.finFlag:
                     self.setState("LISTEN")
 
@@ -194,7 +197,7 @@ class RxPConnectionHandler:
                     synackMessage.synFlag = True
                     synackMessage.ackFlag = True
                     synackMessage.sequenceNumber = self.sequenceNumber
-                    synackMessage.ackMessage = self.ackNumber
+                    synackMessage.ackNumber = self.ackNumber
                     self.sendWindow.addMessage(synackMessage)
 
             elif self.state == "ACK-SENT":
@@ -207,8 +210,8 @@ class RxPConnectionHandler:
                     self.ackNumber = (rxpMessage.sequenceNumber) % 256
                     self.setState("ESTABLISHED")
                     self.establishLock.set()
-                    self.recvWindow = RxPReceiveWindow(5, self.ackNumber, self)
-                    self.sendWindow = RxPSendWindow(5, self.sequenceNumber, self, self.timeout)
+                    self.recvWindow = RxPReceiveWindow(self.windowSize * 4, self.ackNumber, self)
+                    self.sendWindow = RxPSendWindow(self.windowSize * 4, self.sequenceNumber, self, self.timeout)
                 elif rxpMessage.checkIntegrity():
                     self.sendWindow.clear()
                     self.closeTimer.cancel()
@@ -216,8 +219,8 @@ class RxPConnectionHandler:
                     self.ackNumber = (rxpMessage.sequenceNumber + 1) % 256
                     self.setState("ESTABLISHED")
                     self.establishLock.set()
-                    self.recvWindow = RxPReceiveWindow(5, self.ackNumber, self)
-                    self.sendWindow = RxPSendWindow(5, self.sequenceNumber, self, self.timeout)
+                    self.recvWindow = RxPReceiveWindow(self.windowSize * 4, self.ackNumber, self)
+                    self.sendWindow = RxPSendWindow(self.windowSize * 4, self.sequenceNumber, self, self.timeout)
                     self.recvWindow.receiveMessage(rxpMessage) 
 
             # connection established
@@ -366,6 +369,7 @@ class RxPConnectionHandler:
             rxpMessage.ackFlag = (message[6] & 0b01000000) >> 6
             rxpMessage.nackFlag = (message[6] & 0b00100000) >> 5
             rxpMessage.finFlag = (message[6] & 0b00010000) >> 4
+            rxpMessage.windowSize = (message[6] & 0b00001111) + 1
             rxpMessage.checksum = message[7]
             rxpMessage.data = message[8:]
             return rxpMessage
@@ -384,6 +388,7 @@ class RxPMessage:
         self.finFlag = False
         self.checksum = 0
         self.data = bytearray()
+        self.windowSize = 1
 
         self.acked = False
         self.sent = False
@@ -424,6 +429,7 @@ class RxPMessage:
             flags += 0b00100000
         if self.finFlag:
             flags += 0b00010000
+        flags += ((self.windowSize - 1) & 0b00001111)
         message.append(flags)
         message.append(self.checksum)
         message += self.data

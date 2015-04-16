@@ -2,13 +2,14 @@ import RxPConnectionHandler
 
 class RxPSocket:
 
-    def __init__(self, timeout=5):
+    def __init__(self, timeout=5, windowSize = 1):
         self.connectionHandler = None
         self.timeout = timeout
+        self.windowSize = windowSize
         return
 
     def bind(self, ip_address, port):
-        self.connectionHandler = RxPConnectionHandler.RxPConnectionHandler(self.timeout)
+        self.connectionHandler = RxPConnectionHandler.RxPConnectionHandler(self.timeout, self.windowSize)
         self.connectionHandler.bind(ip_address, port)
         return
 
@@ -23,7 +24,7 @@ class RxPSocket:
         return (newSocket, newConnection.destinationAddress)
 
     def connect(self, ip_address, port):
-        self.connectionHandler = RxPConnectionHandler.RxPConnectionHandler(self.timeout)
+        self.connectionHandler = RxPConnectionHandler.RxPConnectionHandler(self.timeout, self.windowSize)
         self.connectionHandler.connect(ip_address, port)
 
     def send(self, byte_array):
