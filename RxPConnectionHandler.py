@@ -108,12 +108,6 @@ class RxPConnectionHandler:
             self.sendWindow.addMessage(FINmessage)
             self.closeLock.wait()
 
-    def resendMessage(self, message):
-        self.sendMessage(message)
-        self.resendTimer = threading.Timer(self.timeout, self.resendMessage, args=[message])
-        self.resendTimer.setDaemon(True)
-        self.resendTimer.start()
-
     def receiveMessage(self):
         received, address = self.socket.recvfrom(65535)
         message = bytearray(received)
@@ -180,6 +174,7 @@ class RxPConnectionHandler:
                     self.sendACK(self.sequenceNumber, self.ackNumber)
                     self.setState("ESTABLISHED")
                     self.establishLock.set()
+                    self.sendWindow.clear()
                     self.recvWindow = RxPReceiveWindow(self.windowSize * 4, self.ackNumber, self)
                     self.sendWindow = RxPSendWindow(self.windowSize * 4, self.sequenceNumber, self, self.timeout)
                 elif rxpMessage.finFlag:
@@ -575,6 +570,8 @@ class RxPReceiveWindow:
         return data
 
 class RxPSendWindow:
+    """ A class for handling the sending of messages and receiving of ACKs/NACKs
+    """
     def __init__(self, windowSize, sequenceStart, connection, timeout=10):
         self.messageBuffer = []
         self.windowSize = windowSize
@@ -599,9 +596,10 @@ class RxPSendWindow:
         message.sent = True
         if message.resendTimer:
             message.resendTimer.cancel()
-        message.resendTimer = threading.Timer(self.timeout, self.sendMessage, args=[message])
-        message.resendTimer.setDaemon(True)
-        message.resendTimer.start()
+        if not message.acked:
+            message.resendTimer = threading.Timer(self.timeout, self.sendMessage, args=[message])
+            message.resendTimer.setDaemon(True)
+            message.resendTimer.start()
 
         """ Closing handshake state updates
         """
@@ -646,6 +644,8 @@ class RxPSendWindow:
                     self.sendMessage(message)
 
     def sendWindow(self):
+        """ Sends everything in the send window that has not been sent
+        """
         index = 0
         while index < len(self.messageBuffer) and index < self.windowSize:
             message = self.messageBuffer[index]
@@ -672,6 +672,9 @@ class RxPSendWindow:
         return ACKed
 
     def clear(self):
+        """ Clears the window and cancels all resending threads
+        """
         for message in self.messageBuffer:
             if message.resendTimer:
                 message.resendTimer.cancel()
+        self.messageBuffer = []
