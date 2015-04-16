@@ -2,7 +2,7 @@ import RxPSocket
 import socket
 import time
 
-server = RxPSocket.RxPSocket()
+server = RxPSocket.RxPSocket(0.5)
 server.bind(socket.gethostname(), 7001)
 server.listen(5)
 connection, address = server.accept()
