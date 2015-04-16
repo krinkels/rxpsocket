@@ -15,11 +15,13 @@ class Client():
     def __init__(self, host, port):
         self.host = host
         self.port = port
+        self.window_size = 1
         self.socket = RxPSocket.RxPSocket()
         self.is_active = True
         print "Client for {}:{} ready".format(host, port)
 
     def connect(self):
+        self.socket.window_size = self.window_size
         self.socket.connect(self.host, self.port)
 
     def hello(self):
@@ -47,8 +49,14 @@ class Client():
         self.recv()
 
     def window(self, window_size):
-        self.send("window", window_size)
-        self.recv()
+        try:
+            window_size = int(window_size)
+            if window_size < 1 or window_size > 16:
+                print "Invalid window size"
+                return
+            self.window_size = window_size
+        except ValueError:
+            print "Invalid window size"
     
     def disconnect(self):
         self.socket.close()
